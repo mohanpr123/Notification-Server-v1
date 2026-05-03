@@ -26,7 +26,7 @@ app.get('/', (req, res) => {
 
 app.post('/send-attendance-push', async (req, res) => {
   try {
-    const { token, deviceName, employeeId } = req.body;
+    const { deviceId, token, employeeId } = req.body;
 
     if (!token) {
       return res.status(400).json({ error: 'Missing token' });
@@ -40,7 +40,7 @@ app.post('/send-attendance-push', async (req, res) => {
       },
       data: {
         action: 'SEND_LOCATION',
-        deviceName: deviceName || '',
+        deviceId: deviceId || '',
         employeeId: String(employeeId || ''),
       },
       android: {
