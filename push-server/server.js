@@ -26,6 +26,7 @@ app.get('/', (req, res) => {
 
 app.post('/send-attendance-push', async (req, res) => {
   try {
+    console.log('send-attendance-push request body:', JSON.stringify(req.body));
     const { attendanceId, deviceId, token, employeeId, checkin } = req.body;
 
     if (!token) {
@@ -61,9 +62,10 @@ app.post('/send-attendance-push', async (req, res) => {
       messageId,
     });
   } catch (error) {
-    console.error(error);
+    console.error('Failed to send push notification:', error);
     res.status(500).json({
-      error: error.message,
+      error: error?.message || 'Unknown error',
+      details: error?.code || undefined,
     });
   }
 });
