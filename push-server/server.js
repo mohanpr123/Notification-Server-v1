@@ -100,12 +100,14 @@ function isUnregisteredTokenError(error) {
 
 async function clearStaleDeviceToken({ deviceId, token, attendanceId, employeeId }) {
   const firestore = admin.firestore();
+  let staleTokenCleared = false;
 
   if (deviceId && token) {
     const deviceRef = firestore.doc(`devices/${deviceId}`);
     const deviceSnapshot = await deviceRef.get();
+    const currentToken = deviceSnapshot.data()?.token;
 
-    if (deviceSnapshot.exists && deviceSnapshot.data()?.token === token) {
+    if (deviceSnapshot.exists && normalizeToken(currentToken) === normalizeToken(token)) {
       await deviceRef.set(
         {
           token: admin.firestore.FieldValue.delete(),
@@ -115,7 +117,16 @@ async function clearStaleDeviceToken({ deviceId, token, attendanceId, employeeId
         },
         { merge: true },
       );
+      staleTokenCleared = true;
     }
+
+    console.log('Stale push token cleanup:', {
+      deviceId,
+      deviceFound: deviceSnapshot.exists,
+      tokenMatched: normalizeToken(currentToken) === normalizeToken(token),
+      staleTokenCleared,
+      projectId: serviceAccount.project_id,
+    });
   }
 
   if (attendanceId) {
@@ -131,6 +142,10 @@ async function clearStaleDeviceToken({ deviceId, token, attendanceId, employeeId
       { merge: true },
     );
   }
+}
+
+function normalizeToken(token) {
+  return typeof token === 'string' ? token.trim() : '';
 }
 
 function normalizeEmployeeId(employeeId) {
