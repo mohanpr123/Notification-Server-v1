@@ -62,7 +62,11 @@ app.post('/send-attendance-push', async (req, res) => {
       messageId,
     });
   } catch (error) {
-    console.error('Failed to send push notification:', error);
+    console.error('Failed to send push notification:', {
+      message: error?.message,
+      code: error?.code,
+      stack: error?.stack,
+    });
     res.status(500).json({
       error: error?.message || 'Unknown error',
       details: error?.code || undefined,
