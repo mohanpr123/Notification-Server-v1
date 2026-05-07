@@ -20,40 +20,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-async function clearInvalidDeviceToken(deviceId, token) {
-  if (!deviceId || !token) {
-    return;
-  }
-
-  try {
-    const deviceRef = admin.firestore().doc(`devices/${deviceId}`);
-    const deviceSnapshot = await deviceRef.get();
-    if (!deviceSnapshot.exists) {
-      console.warn(`Cannot clear token: device document devices/${deviceId} does not exist.`);
-      return;
-    }
-
-    const device = deviceSnapshot.data();
-    if (device?.token !== token) {
-      console.warn(`Token mismatch for devices/${deviceId}; not clearing stale token.`);
-      return;
-    }
-
-    await deviceRef.update({ token: admin.firestore.FieldValue.delete() });
-    console.log(`Cleared stale push token for device ${deviceId}.`);
-  } catch (clearError) {
-    console.error('Failed to clear stale device token:', clearError);
-  }
-}
-
 app.get('/', (req, res) => {
   res.json({ ok: true, service: 'attendance-push-server' });
 });
 
 app.post('/send-attendance-push', async (req, res) => {
+  const { attendanceId, deviceId, token, employeeId, checkin } = req.body || {};
+
   try {
     console.log('send-attendance-push request body:', JSON.stringify(req.body));
-    const { attendanceId, deviceId, token, employeeId, checkin } = req.body;
 
     if (!token) {
       return res.status(400).json({ error: 'Missing token' });
@@ -94,9 +69,22 @@ app.post('/send-attendance-push', async (req, res) => {
       stack: error?.stack,
     });
 
-    if (error?.code === 'messaging/registration-token-not-registered' ||
-        error?.code === 'messaging/invalid-registration-token') {
-      await clearInvalidDeviceToken(deviceId, token);
+    if (isUnregisteredTokenError(error)) {
+      try {
+        await clearStaleDeviceToken({ deviceId, token, attendanceId, employeeId });
+      } catch (cleanupError) {
+        console.error('Failed to clear stale push token:', {
+          message: cleanupError?.message,
+          stack: cleanupError?.stack,
+        });
+      }
+
+      return res.status(410).json({
+        success: false,
+        error: 'Push token is no longer registered. Open the mobile app to register a fresh token.',
+        details: error?.code,
+        deviceId: deviceId || undefined,
+      });
     }
 
     res.status(500).json({
@@ -105,6 +93,56 @@ app.post('/send-attendance-push', async (req, res) => {
     });
   }
 });
+
+function isUnregisteredTokenError(error) {
+  return error?.code === 'messaging/registration-token-not-registered';
+}
+
+async function clearStaleDeviceToken({ deviceId, token, attendanceId, employeeId }) {
+  const firestore = admin.firestore();
+
+  if (deviceId && token) {
+    const deviceRef = firestore.doc(`devices/${deviceId}`);
+    const deviceSnapshot = await deviceRef.get();
+
+    if (deviceSnapshot.exists && deviceSnapshot.data()?.token === token) {
+      await deviceRef.set(
+        {
+          token: admin.firestore.FieldValue.delete(),
+          tokenInvalidatedAt: Date.now(),
+          tokenInvalidationReason: 'registration-token-not-registered',
+          updatedAt: Date.now(),
+        },
+        { merge: true },
+      );
+    }
+  }
+
+  if (attendanceId) {
+    await firestore.doc(`attendance/${attendanceId}`).set(
+      withoutUndefined({
+        pushStatus: 'Failed',
+        verificationStatus: 'PushFailed',
+        pushError: 'FCM registration token is no longer registered.',
+        pushFailedAt: Date.now(),
+        deviceId: deviceId || undefined,
+        employeeId: normalizeEmployeeId(employeeId),
+      }),
+      { merge: true },
+    );
+  }
+}
+
+function normalizeEmployeeId(employeeId) {
+  const parsedEmployeeId = Number(employeeId);
+  return Number.isFinite(parsedEmployeeId) ? parsedEmployeeId : undefined;
+}
+
+function withoutUndefined(value) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entryValue]) => entryValue !== undefined),
+  );
+}
 
 const port = process.env.PORT || 3000;
 
