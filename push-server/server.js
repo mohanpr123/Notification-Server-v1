@@ -20,6 +20,32 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+async function clearInvalidDeviceToken(deviceId, token) {
+  if (!deviceId || !token) {
+    return;
+  }
+
+  try {
+    const deviceRef = admin.firestore().doc(`devices/${deviceId}`);
+    const deviceSnapshot = await deviceRef.get();
+    if (!deviceSnapshot.exists) {
+      console.warn(`Cannot clear token: device document devices/${deviceId} does not exist.`);
+      return;
+    }
+
+    const device = deviceSnapshot.data();
+    if (device?.token !== token) {
+      console.warn(`Token mismatch for devices/${deviceId}; not clearing stale token.`);
+      return;
+    }
+
+    await deviceRef.update({ token: admin.firestore.FieldValue.delete() });
+    console.log(`Cleared stale push token for device ${deviceId}.`);
+  } catch (clearError) {
+    console.error('Failed to clear stale device token:', clearError);
+  }
+}
+
 app.get('/', (req, res) => {
   res.json({ ok: true, service: 'attendance-push-server' });
 });
@@ -67,6 +93,12 @@ app.post('/send-attendance-push', async (req, res) => {
       code: error?.code,
       stack: error?.stack,
     });
+
+    if (error?.code === 'messaging/registration-token-not-registered' ||
+        error?.code === 'messaging/invalid-registration-token') {
+      await clearInvalidDeviceToken(deviceId, token);
+    }
+
     res.status(500).json({
       error: error?.message || 'Unknown error',
       details: error?.code || undefined,
